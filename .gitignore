@@ -1,0 +1,5 @@
+/work
+/composer.lock
+/.vscode
+/vendor
+config.php
