@@ -198,9 +198,9 @@ class Stretcher
             $query = $uri->getQuery();
             $uri = $this->hostUri . $path . ( $query !== '' ? ( '?' . $query ) : '' );
 
-            $key = $headers['CF-Connecting-IP'] ?? false;
+            $key = $headers['Cf-Connecting-Ip'][0] ?? false;
             if( $key === false )
-                $key = $request->getServerParams()['REMOTE_ADDR'];
+                $key = $headers['X-Forwarded-For'][0] ?? $request->getServerParams()['REMOTE_ADDR'];
 
             if( $method === 'GET' )
             {
