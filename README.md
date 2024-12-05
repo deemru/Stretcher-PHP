@@ -1,7 +1,7 @@
 ```bash
 useradd -m -s /bin/bash stretcher && mkdir /stretcher && chown -R stretcher /stretcher
 sudo -u stretcher bash -c "cd /stretcher && git clone https://github.com/deemru/Stretcher.git"
-sudo -u stretcher bash -c "cd /stretcher/Stretcher && composer update -o --no-cache"
+sudo -u stretcher bash -c "cd /stretcher/Stretcher && git pull && composer update -o --no-cache"
 ```
 
 ```bash
