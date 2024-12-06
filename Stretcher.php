@@ -145,7 +145,7 @@ class Stretcher
 
     function response( $code )
     {
-        return new Response( Response::STATUS_GONE, $this->responseHeaders, '' );
+        return new Response( $code, $this->responseHeaders, '' );
     }
 
     function getlog( $name ) : \Monolog\Logger
@@ -213,9 +213,9 @@ class Stretcher
                     function( Exception $e ) use ( $uri, $deferred )
                     {
                         $code = $e->getCode();
-                        $this->log->error( $code . ': ' . $e->getMessage() . ': ' . $uri );
+                        $this->log->error( $code . ': ' . $e->getMessage() . ': ' . substr( $uri, strlen( $this->hostUri ) + 1 ) );
                         if( $code >= 400 && $code < 600 )
-                            $deferred->resolve( new Response( $code, $this->responseHeaders, '' ) );
+                            $deferred->resolve( $this->response( $code ) );
                         else
                             $deferred->resolve( $this->responseUnavailable );
                     } );
@@ -237,9 +237,9 @@ class Stretcher
                     function( Exception $e ) use ( $uri, $deferred )
                     {
                         $code = $e->getCode();
-                        $this->log->error( $code . ': ' . $e->getMessage() . ': ' . $uri );
+                        $this->log->error( $code . ': ' . $e->getMessage() . ': ' . substr( $uri, strlen( $this->hostUri ) + 1 ) );
                         if( $code >= 400 && $code < 600 )
-                            $deferred->resolve( new Response( $code, $this->responseHeaders, '' ) );
+                            $deferred->resolve( $this->response( $code ) );
                         else
                             $deferred->resolve( $this->responseUnavailable );
                     } );
