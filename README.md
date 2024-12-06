@@ -1,4 +1,12 @@
 ```bash
+apt update && apt install php-cli php-curl git -y
+php -r "
+    copy( 'https://getcomposer.org/installer', 'composer-setup.php' );
+    system( 'php composer-setup.php --install-dir=/usr/local/bin --filename=composer' );
+    unlink( 'composer-setup.php' );
+"
+```
+```bash
 useradd -m -s /bin/bash stretcher && mkdir /stretcher && chown -R stretcher /stretcher
 sudo -u stretcher bash -c "cd /stretcher && git clone https://github.com/deemru/Stretcher.git"
 sudo -u stretcher bash -c "cd /stretcher/Stretcher && git pull && composer update -o --no-cache"
