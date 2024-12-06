@@ -34,9 +34,22 @@ class Stretcher
             [ $deferred, $active ] = $this->baskets[$key][$id];
         $deferred->promise()->then( function() use ( $key, $id, $ttaction )
         {
-            $cc = microtime( true ) - $ttaction;
+            $ttnow = microtime( true );
+            $cc = $ttnow - $ttaction;
             [ $ttlast, $cclast, $ddlast ] = $this->ttccdd[$key];
-            $this->ttccdd[$key] = [ $ttlast, $cclast + $cc, $ddlast ];
+            $ttdiff = $ttnow - $ttlast;
+            if( $ttdiff < $this->ttwindow )
+            {
+                $fading = 1 - ( $ttdiff / $this->ttwindow );
+                $cclast *= $fading;
+                $ddlast *= $fading;
+            }
+            else
+            {
+                $cclast = 0;
+                $ddlast = 0;
+            }
+            $this->ttccdd[$key] = [ $ttnow, $cclast + $cc, $ddlast ];
             if( count( $this->baskets[$key] ) === 1 )
                 unset( $this->baskets[$key] );
             else
@@ -66,7 +79,7 @@ class Stretcher
             $fading = 1 - ( $ttdiff / $this->ttwindow );
             $cclast *= $fading;
             $ddlast *= $fading;
-            $target = $cclast * $this->quant;
+            $target = $cclast * $this->quant - $cclast;
 
             if( $ttdiff > $target )
                 $delay = 0;
