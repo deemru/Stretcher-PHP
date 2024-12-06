@@ -34,5 +34,9 @@ nano /etc/crontab
 ```
 
 ```bash
+sudo -u stretcher bash -c "nohup bash /stretcher/Stretcher/run.sh | systemd-cat -t Stretcher &"
+```
+
+```bash
 journalctl -t Stretcher -f -n 100
 ```
