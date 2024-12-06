@@ -20,6 +20,7 @@ class Stretcher
     private $ttwindow;
     private $cctarget;
     private $hardlimit;
+    private $hardtimeout;
     private $quant;
     private $baskets; // [ deffered, active ]
     private $loop;
@@ -56,22 +57,23 @@ class Stretcher
                 unset( $this->baskets[$key][$id] );
         } );
 
-        if( $active )
+        if( $active !== false )
             $action( $deferred );
         else
-            $deferred->resolve( $this->responseGone );
+            $deferred->resolve( $this->responseTimeout );
     }
 
     function putWithDelay( $key, $id, $action, $async )
     {
+        $ttnow = microtime( true );
+
         if( $async )
         {
             [ $deferred, $active ] = $this->baskets[$key][$id];
-            if( $active === false )
+            if( $active === false || $ttnow - $active > $this->hardtimeout )
                 return $this->proc( $key, $id, $action, $deferred );
         }
 
-        $ttnow = microtime( true );
         [ $ttlast, $cclast, $ddlast ] = $this->ttccdd[$key] ?? [ 0, 0, 0 ];
         $ttdiff = $ttnow - $ttlast;
         if( $ttdiff < $this->ttwindow )
@@ -126,13 +128,13 @@ class Stretcher
     function put( $key, $action )
     {
         $basket = $this->baskets[$key] ?? [];
-        if( count( $basket ) > $this->hardlimit )
+        if( count( $basket ) >= $this->hardlimit )
             return $this->responseTooMany;
         $tail = end( $basket );
 
         $id = ++$this->monotonic;
         $deferred = new Deferred( function() use ( $key, $id ){ $this->baskets[$key][$id][1] = false; } );
-        $this->baskets[$key][$id] = [ $deferred, true ];
+        $this->baskets[$key][$id] = [ $deferred, microtime( true ) ];
 
         if( $tail !== false )
             $tail[0]->promise()->then( function() use ( $key, $id, $action ){ $this->loop->futureTick( function() use ( $key, $id, $action ){ $this->putWithDelay( $key, $id, $action, true ); } ); } );
@@ -151,10 +153,10 @@ class Stretcher
     private HttpServer $http;
     private SocketServer $socket;
 
-    private Response $responseGone;
     private Response $responseNotAllowed;
     private Response $responseTooMany;
     private Response $responseUnavailable;
+    private Response $responseTimeout;
 
     function response( $code )
     {
@@ -173,7 +175,7 @@ class Stretcher
         return $logger;
     }
 
-    function __construct( $from, $to, $timeout, $ttwindow, $cctarget, $hardlimit, $debug )
+    function __construct( $from, $to, $hardtimeout, $ttwindow, $cctarget, $hardlimit, $debug )
     {
         $this->loop = Loop::get();
         $this->debug = $debug;
@@ -181,21 +183,23 @@ class Stretcher
         $this->ttwindow = $ttwindow;
         $this->cctarget = $cctarget;
         $this->hardlimit = $hardlimit;
+        $this->hardtimeout = $hardtimeout;
+
         $this->quant = $this->ttwindow / $this->cctarget;
 
         $this->name = 'Stretcher';
         $this->responseHeaders = [ 'Server' => $this->name ];
-        $this->responseGone = $this->response( Response::STATUS_GONE );
         $this->responseNotAllowed = $this->response( Response::STATUS_METHOD_NOT_ALLOWED );
         $this->responseTooMany = $this->response( Response::STATUS_TOO_MANY_REQUESTS );
         $this->responseUnavailable = $this->response( Response::STATUS_SERVICE_UNAVAILABLE );
+        $this->responseTimeout = $this->response( Response::STATUS_REQUEST_TIMEOUT );
 
         $this->log = $this->getlog( $this->name );
         $this->log->info( $this->name . ' created' );
 
         $this->host = $to;
         $this->hostUri = 'http://' . $to;
-        $this->receiver = ( new Browser )->withTimeout( $timeout )->withFollowRedirects( false );
+        $this->receiver = ( new Browser )->withTimeout( $this->hardtimeout )->withFollowRedirects( false );
 
         $this->http = new HttpServer( new StreamingRequestMiddleware, function( ServerRequestInterface $request )
         {
