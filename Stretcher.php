@@ -8,10 +8,9 @@ use React\EventLoop\Loop;
 use React\Http\Browser;
 use React\Http\HttpServer;
 use React\Http\Message\Response;
-use React\Http\Middleware\StreamingRequestMiddleware;
+use React\Http\Middleware\RequestBodyBufferMiddleware;
 use React\Promise\Deferred;
 use React\Socket\SocketServer;
-use React\Stream\ReadableStreamInterface;
 
 class Stretcher
 {
@@ -201,7 +200,7 @@ class Stretcher
         $this->hostUri = 'http://' . $to;
         $this->receiver = ( new Browser )->withTimeout( $this->hardtimeout )->withFollowRedirects( false );
 
-        $this->http = new HttpServer( new StreamingRequestMiddleware, function( ServerRequestInterface $request )
+        $this->http = new HttpServer( new RequestBodyBufferMiddleware( 1048576 ), function( ServerRequestInterface $request )
         {
             $method = $request->getMethod();
             if( $method !== 'GET' && $method !== 'POST' )
@@ -242,9 +241,6 @@ class Stretcher
             // if( $method === 'POST' )
             {
                 $body = $request->getBody();
-                if( $body instanceof ReadableStreamInterface )
-                    $body->pause();
-
                 return $this->put( $key, function( $deferred ) use ( $uri, $headers, $body )
                 {
                     $this->receiver->post( $uri, $headers, $body )->then( function( ResponseInterface $response ) use ( $deferred )
@@ -260,9 +256,6 @@ class Stretcher
                         else
                             $deferred->resolve( $this->responseUnavailable );
                     } );
-
-                    if( $body instanceof ReadableStreamInterface )
-                        $body->resume();
                 } );
             }
         } );
