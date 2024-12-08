@@ -9,8 +9,66 @@ use React\Http\Browser;
 use React\Http\HttpServer;
 use React\Http\Message\Response;
 use React\Http\Middleware\RequestBodyBufferMiddleware;
+use React\Http\Middleware\StreamingRequestMiddleware;
 use React\Promise\Deferred;
 use React\Socket\SocketServer;
+use React\Stream\ReadableStreamInterface;
+use React\Stream\ThroughStream;
+use React\Stream\WritableStreamInterface;
+
+class HalfBuffered
+{
+    private $maxbytes;
+    private $buffer = '';
+    private $buffering = true;
+    public $overflow = false;
+    private WritableStreamInterface $stream;
+
+    public function __construct( $maxbytes, ReadableStreamInterface $stream )
+    {
+        $this->maxbytes = $maxbytes;
+        $stream->on( 'data', function( $chunk ){ $this->onData( $chunk ); } );
+        $stream->on( 'end', function(){ $this->onEnd(); } );
+    }
+
+    public function onData( $chunk )
+    {
+        if( $this->buffering && !$this->overflow )
+        {
+            if( strlen( $this->buffer ) + strlen( $chunk ) < $this->maxbytes )
+                $this->buffer .= $chunk;
+            else
+                $this->overflow = true;
+        }
+        else
+            $this->stream->write( $chunk );
+    }
+
+    public function onEnd()
+    {
+        $this->buffering = false;
+    }
+
+    public function onConnected()
+    {
+        $this->buffering = false;
+        if( $this->buffer !== '' && isset( $this->stream ) )
+            $this->stream->write( $this->buffer );
+    }
+
+    public function getBuffered()
+    {
+        if( $this->buffering === false )
+            return $this->buffer;
+        return false;
+    }
+
+    public function getStream()
+    {
+        $this->stream = new ThroughStream;
+        return $this->stream;
+    }
+}
 
 class Stretcher
 {
@@ -20,6 +78,7 @@ class Stretcher
     private $cctarget;
     private $hardlimit;
     private $hardtimeout;
+    private $maxbytes;
     private $quant;
     private $baskets; // [ deffered, active ]
     private $loop;
@@ -103,6 +162,13 @@ class Stretcher
         if( $this->debug )
         {
             $uri = substr( ( new ReflectionFunction( $action ) )->getStaticVariables()['uri'], strlen( $this->hostUri ) + 1 );
+            $post = ( new ReflectionFunction( $action ) )->getStaticVariables()['post'] ?? false;
+            if( $post !== false )
+            {
+                $json = json_decode( (string)$post, true );
+                $method = $json['method'] ?? '(no method)';
+                $uri .= $method;
+            }
 
             if( $ttdiff >= $this->ttwindow )
             {
@@ -156,6 +222,7 @@ class Stretcher
     private Response $responseTooMany;
     private Response $responseUnavailable;
     private Response $responseTimeout;
+    private Response $responseTooLarge;
 
     function response( $code )
     {
@@ -174,7 +241,7 @@ class Stretcher
         return $logger;
     }
 
-    function __construct( $from, $to, $hardtimeout, $ttwindow, $cctarget, $hardlimit, $debug )
+    function __construct( $from, $to, $hardtimeout, $ttwindow, $cctarget, $hardlimit, $maxbytes, $debug )
     {
         $this->loop = Loop::get();
         $this->debug = $debug;
@@ -183,6 +250,7 @@ class Stretcher
         $this->cctarget = $cctarget;
         $this->hardlimit = $hardlimit;
         $this->hardtimeout = $hardtimeout;
+        $this->maxbytes = $maxbytes;
 
         $this->quant = $this->ttwindow / $this->cctarget;
 
@@ -192,6 +260,7 @@ class Stretcher
         $this->responseTooMany = $this->response( Response::STATUS_TOO_MANY_REQUESTS );
         $this->responseUnavailable = $this->response( Response::STATUS_SERVICE_UNAVAILABLE );
         $this->responseTimeout = $this->response( Response::STATUS_REQUEST_TIMEOUT );
+        $this->responseTooLarge = $this->response( Response::STATUS_PAYLOAD_TOO_LARGE );
 
         $this->log = $this->getlog( $this->name );
         $this->log->info( $this->name . ' created' );
@@ -200,7 +269,8 @@ class Stretcher
         $this->hostUri = 'http://' . $to;
         $this->receiver = ( new Browser )->withTimeout( $this->hardtimeout )->withFollowRedirects( false );
 
-        $this->http = new HttpServer( new RequestBodyBufferMiddleware( 1048576 ), function( ServerRequestInterface $request )
+        $middleware = $this->debug ? ( new RequestBodyBufferMiddleware( $this->maxbytes ) ) : ( new StreamingRequestMiddleware );
+        $this->http = new HttpServer( $middleware, function( ServerRequestInterface $request )
         {
             $method = $request->getMethod();
             if( $method !== 'GET' && $method !== 'POST' )
@@ -241,8 +311,25 @@ class Stretcher
             // if( $method === 'POST' )
             {
                 $body = $request->getBody();
-                return $this->put( $key, function( $deferred ) use ( $uri, $headers, $body )
+                if( $body instanceof ReadableStreamInterface )
+                    $post = new HalfBuffered( $this->maxbytes, $body );
+                else
+                    $post = $body;
+
+                return $this->put( $key, function( $deferred ) use ( $uri, $headers, $post )
                 {
+                    if( $post instanceof HalfBuffered )
+                    {
+                        if( $post->overflow )
+                            return $deferred->resolve( $this->responseTooLarge );
+
+                        $body = $post->getBuffered();
+                        if( $body === false )
+                            $body = $post->getStream();
+                    }
+                    else
+                        $body = $post;
+
                     $this->receiver->post( $uri, $headers, $body )->then( function( ResponseInterface $response ) use ( $deferred )
                     {
                         $deferred->resolve( $response );
@@ -256,6 +343,9 @@ class Stretcher
                         else
                             $deferred->resolve( $this->responseUnavailable );
                     } );
+
+                    if( $post instanceof HalfBuffered )
+                        $post->onConnected();
                 } );
             }
         } );
@@ -280,6 +370,7 @@ $timeout = (int)( $argv[3] ?? 12 );
 $window = (int)( $argv[4] ?? 12 );
 $target = (int)( $argv[5] ?? 4 );
 $hardlimit = (int)( $argv[6] ?? 64 );
-$debug = (bool)( $argv[7] ?? false );
+$maxbytes = (int)( $argv[7] ?? 1048576 );
+$debug = (bool)( $argv[8] ?? false );
 
-new Stretcher( $from, $to, $timeout, $window, $target, $hardlimit, $debug );
+new Stretcher( $from, $to, $timeout, $window, $target, $hardlimit, $maxbytes, $debug );
