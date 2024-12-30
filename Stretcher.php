@@ -12,59 +12,46 @@ use React\Http\Middleware\RequestBodyBufferMiddleware;
 use React\Http\Middleware\StreamingRequestMiddleware;
 use React\Promise\Deferred;
 use React\Socket\SocketServer;
-use React\Stream\ReadableStreamInterface;
 use React\Stream\ThroughStream;
 use React\Stream\WritableStreamInterface;
 
 class HalfBuffered
 {
+    public $overflow = false;
+
     private $maxbytes;
     private $buffer = '';
-    private $buffering = true;
-    public $overflow = false;
+    private $end = false;
     private WritableStreamInterface $stream;
 
-    public function __construct( $maxbytes, ReadableStreamInterface $stream )
+    public function __construct( $maxbytes, $stream )
     {
         $this->maxbytes = $maxbytes;
         $stream->on( 'data', function( $chunk ){ $this->onData( $chunk ); } );
-        $stream->on( 'end', function(){ $this->onEnd(); } );
+        $stream->on( 'end', function(){ $this->end = true; } );
     }
 
-    public function onData( $chunk )
+    private function onData( $chunk )
     {
-        if( $this->buffering && !$this->overflow )
-        {
-            if( strlen( $this->buffer ) + strlen( $chunk ) < $this->maxbytes )
-                $this->buffer .= $chunk;
-            else
-                $this->overflow = true;
-        }
-        else
-            $this->stream->write( $chunk );
-    }
+        if( isset( $this->stream ) )
+            return $this->stream->write( $chunk );
 
-    public function onEnd()
-    {
-        $this->buffering = false;
+        if( $this->overflow || strlen( $this->buffer ) + strlen( $chunk ) > $this->maxbytes )
+            return ( $this->overflow = true );
+
+        $this->buffer .= $chunk;
     }
 
     public function onConnected()
     {
-        $this->buffering = false;
-        if( $this->buffer !== '' && isset( $this->stream ) )
+        if( isset( $this->stream ) && !empty( $this->buffer ) )
             $this->stream->write( $this->buffer );
     }
 
-    public function getBuffered()
+    public function getBufferOrStream()
     {
-        if( $this->buffering === false )
+        if( $this->end )
             return $this->buffer;
-        return false;
-    }
-
-    public function getStream()
-    {
         $this->stream = new ThroughStream;
         return $this->stream;
     }
@@ -83,6 +70,7 @@ class Stretcher
     private $baskets; // [ deffered, active ]
     private $loop;
     private $debug;
+    private $isHalfBuffered;
 
     function proc( $key, $id, $action, $deferred = false )
     {
@@ -161,26 +149,21 @@ class Stretcher
 
         if( $this->debug )
         {
-            $uri = substr( ( new ReflectionFunction( $action ) )->getStaticVariables()['uri'], strlen( $this->hostUri ) + 1 );
             $post = ( new ReflectionFunction( $action ) )->getStaticVariables()['post'] ?? false;
             if( $post !== false )
             {
                 $json = json_decode( (string)$post, true );
                 $method = $json['method'] ?? '(no method)';
-                $uri .= $method;
+                $uri = $method;
             }
+            else
+                $uri = substr( ( new ReflectionFunction( $action ) )->getStaticVariables()['uri'], strlen( $this->hostUri ) );
 
             if( $ttdiff >= $this->ttwindow )
             {
                 $cclast = 0;
                 $ttdiff = 0;
             }
-            $this->log->info( $key . ' (' . count( $this->baskets[$key] ) . '; ' . sprintf( '%.02f', 1000 * $cclast ) . '; ' . sprintf( '%.02f', 1000 * $ttdiff ) . '; ' . sprintf( '%.02f', 1000 * $delay ) . '): ' . $uri );
-        }
-        else
-        if( $delay > 0 )
-        {
-            $uri = substr( ( new ReflectionFunction( $action ) )->getStaticVariables()['uri'], strlen( $this->hostUri ) + 1 );
             $this->log->info( $key . ' (' . count( $this->baskets[$key] ) . '; ' . sprintf( '%.02f', 1000 * $cclast ) . '; ' . sprintf( '%.02f', 1000 * $ttdiff ) . '; ' . sprintf( '%.02f', 1000 * $delay ) . '): ' . $uri );
         }
 
@@ -269,7 +252,16 @@ class Stretcher
         $this->hostUri = 'http://' . $to;
         $this->receiver = ( new Browser )->withTimeout( $this->hardtimeout )->withFollowRedirects( false );
 
-        $middleware = $this->debug ? ( new RequestBodyBufferMiddleware( $this->maxbytes ) ) : ( new StreamingRequestMiddleware );
+        if( $this->debug )
+        {
+            $middleware = new RequestBodyBufferMiddleware( $this->maxbytes );
+            $this->isHalfBuffered = false;
+        }
+        else
+        {
+            $middleware = new StreamingRequestMiddleware;
+            $this->isHalfBuffered = true;
+        }
         $this->http = new HttpServer( $middleware, function( ServerRequestInterface $request )
         {
             $method = $request->getMethod();
@@ -311,21 +303,22 @@ class Stretcher
             // if( $method === 'POST' )
             {
                 $body = $request->getBody();
-                if( $body instanceof ReadableStreamInterface )
+                if( $this->isHalfBuffered )
                     $post = new HalfBuffered( $this->maxbytes, $body );
                 else
                     $post = $body;
 
                 return $this->put( $key, function( $deferred ) use ( $uri, $headers, $post )
                 {
-                    if( $post instanceof HalfBuffered )
+                    if( $this->isHalfBuffered )
                     {
                         if( $post->overflow )
+                        {
+                            $this->log->error( 'HalfBuffered overflow' );
                             return $deferred->resolve( $this->responseTooLarge );
+                        }
 
-                        $body = $post->getBuffered();
-                        if( $body === false )
-                            $body = $post->getStream();
+                        $body = $post->getBufferOrStream();
                     }
                     else
                         $body = $post;
@@ -344,7 +337,7 @@ class Stretcher
                             $deferred->resolve( $this->responseUnavailable );
                     } );
 
-                    if( $post instanceof HalfBuffered )
+                    if( $this->isHalfBuffered )
                         $post->onConnected();
                 } );
             }
