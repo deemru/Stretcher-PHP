@@ -149,22 +149,26 @@ class Stretcher
 
         if( $this->debug )
         {
+            $uri = substr( ( new ReflectionFunction( $action ) )->getStaticVariables()['uri'], strlen( $this->hostUri ) );
             $post = ( new ReflectionFunction( $action ) )->getStaticVariables()['post'] ?? false;
             if( $post !== false )
             {
-                $json = json_decode( (string)$post, true );
-                $method = $json['method'] ?? '(no method)';
-                $uri = $method;
+                if( $uri !== '/' )
+                    $uri .= ' (POST)';
+                else
+                {
+                    $json = json_decode( (string)$post, true );
+                    $method = $json['method'] ?? false;
+                    if( $method === false )
+                        $uri .= ' (POST)';
+                    else
+                        $uri = $method;
+                }
             }
-            else
-                $uri = substr( ( new ReflectionFunction( $action ) )->getStaticVariables()['uri'], strlen( $this->hostUri ) );
 
             if( $ttdiff >= $this->ttwindow )
-            {
                 $cclast = 0;
-                $ttdiff = 0;
-            }
-            $this->log->info( $key . ' (' . count( $this->baskets[$key] ) . '; ' . sprintf( '%.02f', 1000 * $cclast ) . '; ' . sprintf( '%.02f', 1000 * $ttdiff ) . '; ' . sprintf( '%.02f', 1000 * $delay ) . '): ' . $uri );
+            $this->log->debug( $key . ' (' . count( $this->baskets[$key] ) . '; ' . intval( 1000 * $cclast ) . '; ' . intval( 1000 * $delay ) . '): ' . $uri );
         }
 
         if( $delay > 0.001 )
