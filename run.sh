@@ -8,5 +8,5 @@ while :; do
     php Stretcher.php;
     echo "-------------------";
     date "+%Y.%m.%d %H:%M:%S";
-    sleep 12;
+    sleep 1;
 done
