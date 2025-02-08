@@ -269,7 +269,7 @@ class Stretcher
         $this->http = new HttpServer( $middleware, function( ServerRequestInterface $request )
         {
             $method = $request->getMethod();
-            if( $method !== 'GET' && $method !== 'POST' )
+            if( $method !== 'GET' && $method !== 'POST' && $method !== 'OPTIONS' )
                 return $this->responseNotAllowed;
 
             $headers = $request->getHeaders();
@@ -304,7 +304,7 @@ class Stretcher
                 } );
             }
             else
-            // if( $method === 'POST' )
+            if( $method === 'POST' )
             {
                 $body = $request->getBody();
                 if( $this->isHalfBuffered )
@@ -343,6 +343,26 @@ class Stretcher
 
                     if( $this->isHalfBuffered )
                         $post->onConnected();
+                } );
+            }
+            else
+            //if( $method === 'OPTIONS' )
+            {
+                return $this->put( $key, function( $deferred ) use ( $uri, $headers )
+                {
+                    $this->receiver->request( 'OPTIONS', $uri, $headers )->then( function( ResponseInterface $response ) use ( $deferred )
+                    {
+                        $deferred->resolve( $response );
+                    },
+                    function( Exception $e ) use ( $uri, $deferred )
+                    {
+                        $code = $e->getCode();
+                        $this->log->error( $code . ': ' . $e->getMessage() . ': ' . substr( $uri, strlen( $this->hostUri ) + 1 ) );
+                        if( $code >= 400 && $code < 600 )
+                            $deferred->resolve( $this->response( $code ) );
+                        else
+                            $deferred->resolve( $this->responseUnavailable );
+                    } );
                 } );
             }
         } );
