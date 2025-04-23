@@ -1,4 +1,4 @@
-# Stretcher
+# Stretcher-PHP
 
 Stretcher is a minimal request throttling proxy server.
 
@@ -56,20 +56,20 @@ chown -R stretcher /stretcher
 
 ### Clone repository and install dependencies
 ```bash
-sudo -u stretcher bash -c "cd /stretcher && git clone https://github.com/deemru/Stretcher.git"
-sudo -u stretcher bash -c "cd /stretcher/Stretcher && git pull && composer update -o --no-cache"
+sudo -u stretcher bash -c "cd /stretcher && git clone https://github.com/deemru/Stretcher-PHP.git"
+sudo -u stretcher bash -c "cd /stretcher/Stretcher-PHP && git pull && composer update -o --no-cache"
 ```
 
 ## Running
 
 ### Start the service
 ```bash
-sudo -u stretcher bash -c "cd /stretcher/Stretcher && php Stretcher.php --upstream=127.0.0.1:80 --debug=true"
+sudo -u stretcher bash -c "cd /stretcher/Stretcher-PHP && php Stretcher.php --upstream=127.0.0.1:80 --debug=true"
 ```
 
 ### For automatic startup on boot
 ```bash
-echo "@reboot stretcher cd /stretcher/Stretcher && php Stretcher.php --upstream=127.0.0.1:80 --debug=true | systemd-cat -t Stretcher &" >> /etc/crontab
+echo "@reboot stretcher cd /stretcher/Stretcher-PHP && php Stretcher.php --upstream=127.0.0.1:80 --debug=true | systemd-cat -t Stretcher &" >> /etc/crontab
 ```
 
 ## Monitoring
